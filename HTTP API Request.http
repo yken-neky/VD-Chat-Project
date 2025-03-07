@@ -1,0 +1,9 @@
+### Crear sala (WebSocket)
+WEBSOCKET ws://localhost:3000/ws/create
+Upgrade: websocket
+Connection: Upgrade
+###
+
+WEBSOCKET ws://localhost:3000/ws/join/01873e17-2785-40ca-8672-c49e0e0a8018
+Upgrade: websocket
+Connection: Upgrade

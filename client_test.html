@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>VDChat Tester</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+        .section {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        button {
+            padding: 8px 15px;
+            margin: 5px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        input {
+            padding: 8px;
+            width: 250px;
+        }
+        #logs {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            height: 150px;
+            overflow-y: auto;
+        }
+        .error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .success {
+            color: #28a745;
+        }
+        #chatMessages {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .message {
+            margin: 5px;
+            padding: 8px;
+            border-radius: 5px;
+            word-break: break-word;
+        }
+        .own-message {
+            background: #e3f2fd;
+        }
+        .other-message {
+            background: #f5f5f5;
+        }
+        .timestamp {
+            font-size: 0.8em;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+<h1>VDChat Tester</h1>
+
+<div class="section">
+    <h2>Crear Nueva Sala</h2>
+    <button onclick="createRoom()">Crear Sala</button>
+    <div id="createdRoomInfo"></div>
+</div>
+
+<div class="section">
+    <h2>Unirse a Sala Existente</h2>
+    <input type="text" id="roomId" placeholder="ID de la sala">
+    <button onclick="joinRoom()">Unirse</button>
+    <div id="joinStatus"></div>
+</div>
+
+<div class="section">
+    <h2>Chat</h2>
+    <div id="chatMessages"></div>
+    <input type="text" id="messageInput" placeholder="Escribe tu mensaje">
+    <button onclick="sendMessage()">Enviar</button>
+</div>
+
+<div class="section">
+    <h3>Logs de Conexión</h3>
+    <div id="logs"></div>
+</div>
+
+<script>
+    let currentRoomWs = null;
+    let currentParticipantId = null;
+    const logs = document.getElementById('logs');
+    const chatMessages = document.getElementById('chatMessages');
+    const messageInput = document.getElementById('messageInput');
+
+    function logMessage(message, className = '') {
+        const logEntry = document.createElement('div');
+        logEntry.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
+        if (className) logEntry.classList.add(className);
+        logs.appendChild(logEntry);
+        logs.scrollTop = logs.scrollHeight;
+    }
+
+    function createRoom() {
+        if (currentRoomWs) {
+            logMessage('Cierra la conexión actual primero', 'error');
+            return;
+        }
+
+        currentRoomWs = new WebSocket('ws://localhost:3000/ws/create');
+        logMessage('Iniciando creación de sala...');
+
+        currentRoomWs.onopen = () => {
+            logMessage('Conexión para crear sala establecida', 'success');
+        };
+
+        currentRoomWs.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+
+            if (data.error) {
+                logMessage(`Error: ${data.error}`, 'error');
+                return;
+            }
+
+            if (data.room_id && data.participant_id) {
+                currentParticipantId = data.participant_id;
+                document.getElementById('createdRoomInfo').innerHTML = `
+                    <p class="success">Sala creada exitosamente!</p>
+                    <p>ID Sala: ${data.room_id}</p>
+                    <p>Tu ID: ${currentParticipantId}</p>
+                `;
+                logMessage(`Sala ${data.room_id} creada`, 'success');
+                setupMessageHandler();
+            }
+        };
+
+        currentRoomWs.onclose = () => {
+            logMessage('Conexión de creación cerrada');
+            currentRoomWs = null;
+        };
+
+        currentRoomWs.onerror = (err) => {
+            logMessage(`Error de conexión: ${err.message}`, 'error');
+        };
+    }
+
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
+
+    function joinRoom() {
+        const roomId = document.getElementById('roomId').value.trim();
+        if (!roomId) return;
+
+        // Cerrar conexión existente si está activa
+        if (currentRoomWs && currentRoomWs.readyState === WebSocket.OPEN) {
+            currentRoomWs.close();
+        }
+
+        currentRoomWs = new WebSocket(`ws://localhost:3000/ws/join/${roomId}`);
+
+        // Configurar manejadores de eventos
+        currentRoomWs.onopen = () => {
+            reconnectAttempts = 0;
+            logMessage(`Conectado a sala: ${roomId}`, "success");
+            setupMessageHandler();
+        };
+
+        currentRoomWs.onclose = (event) => {
+            logMessage("Conexión cerrada. Intentando reconectar...", "error");
+            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                setTimeout(() => {
+                    reconnectAttempts++;
+                    joinRoom(); // Reconexión automática
+                }, 3000);
+            }
+        };
+
+        currentRoomWs.onerror = (error) => {
+            logMessage(`Error de conexión: ${error.message}`, "error");
+        };
+    }
+
+    function setupMessageHandler() {
+        currentRoomWs.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+
+            if (data.type === 'message') {
+                addMessageToChat(
+                    data.from,
+                    data.content,
+                    data.from === currentParticipantId,
+                    new Date(data.time)
+                );
+            }
+        };
+    }
+
+    function addMessageToChat(sender, message, isOwn, timestamp = new Date()) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${isOwn ? 'own-message' : 'other-message'}`;
+        messageDiv.innerHTML = `
+            <div><strong>${isOwn ? 'Tú' : sender}</strong>: ${message}</div>
+            <div class="timestamp">${timestamp.toLocaleTimeString()}</div>
+        `;
+        chatMessages.appendChild(messageDiv);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function sendMessage() {
+        console.log("[DEBUG] Estado de currentRoomWs:", currentRoomWs);
+
+        if (currentRoomWs) {
+            console.log("[DEBUG] Estado de la conexión:", currentRoomWs.readyState);
+            console.log("[DEBUG] URL de la conexión:", currentRoomWs.url);
+        } else {
+            console.log("[DEBUG] currentRoomWs es null/undefined");
+        }
+
+        if (!currentRoomWs || currentRoomWs.readyState !== WebSocket.OPEN) {
+            logMessage("No estás conectado a una sala", "error");
+            return;
+        }
+
+        const message = messageInput.value.trim();
+        if (!message) return;
+
+        currentRoomWs.send(JSON.stringify({
+            type: "message",
+            message: message
+        }));
+
+        addMessageToChat(currentParticipantId, message, true);
+        messageInput.value = '';
+    }
+
+    // Manejar envío con Enter
+    messageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            sendMessage();
+        }
+    });
+</script>
+</body>
+</html>
